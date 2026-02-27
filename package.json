@@ -1,0 +1,11 @@
+{
+	"name": "@xgx/util",
+	"version": "0.1.0",
+	"type": "module",
+	"exports": {
+		"./log-preload": "./src/log-preload.ts"
+	},
+	"peerDependencies": {
+		"bun": "*"
+	}
+}
