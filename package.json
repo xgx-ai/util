@@ -3,9 +3,6 @@
 	"version": "0.1.0",
 	"type": "module",
 	"exports": {
-		"./log-preload": "./src/log-preload.ts"
-	},
-	"peerDependencies": {
-		"bun": "*"
+		"./preload/log": "./src/preload/log.ts"
 	}
 }
