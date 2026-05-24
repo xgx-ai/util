@@ -202,7 +202,7 @@
     #!${shellPkgs.bash}/bin/bash
     set -euo pipefail
 
-    RUNTIME_SCRIPT_VERSION=3
+    RUNTIME_SCRIPT_VERSION=4
     RUNTIME_SCRIPT_CONFIG_HASH=${lib.escapeShellArg configHash}
     RUNTIME_PROJECT_NAME=${lib.escapeShellArg cfg.name}
     RUNTIME_DATA_DIR=${lib.escapeShellArg cfg.dataDir}
@@ -498,6 +498,10 @@
 
     EOF
       done
+
+      if command -v caddy >/dev/null 2>&1; then
+        caddy fmt --overwrite "$RUNTIME_CADDYFILE" >/dev/null 2>&1 || true
+      fi
     }
 
     runtime_write_procfile() {
