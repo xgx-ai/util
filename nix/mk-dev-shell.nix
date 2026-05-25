@@ -202,7 +202,7 @@
     #!${shellPkgs.bash}/bin/bash
     set -euo pipefail
 
-    RUNTIME_SCRIPT_VERSION=4
+    RUNTIME_SCRIPT_VERSION=5
     RUNTIME_SCRIPT_CONFIG_HASH=${lib.escapeShellArg configHash}
     RUNTIME_PROJECT_NAME=${lib.escapeShellArg cfg.name}
     RUNTIME_DATA_DIR=${lib.escapeShellArg cfg.dataDir}
@@ -513,7 +513,7 @@
       done
 
       if [ -n "''${PGPORT:-}" ]; then
-        printf '%-12s %s\n' "postgres:" 'cd "$RUNTIME_ROOT" && withpg tail -f /dev/null' >>"$RUNTIME_PROCFILE"
+        printf '%-12s %s\n' "postgres:" 'cd "$RUNTIME_ROOT" && withpg runtime hold-postgres' >>"$RUNTIME_PROCFILE"
       fi
 
       if [ -n "''${REDIS_PORT:-}" ]; then
@@ -751,7 +751,26 @@
         curl -sf --max-time 0.5 "$url" >/dev/null 2>&1 || return 1
       done
 
+      if [ -n "''${PGPORT:-}" ]; then
+        runtime_postgres_healthy || return 1
+      fi
+
       return 0
+    }
+
+    runtime_postgres_healthy() {
+      [ -n "''${PGHOST:-}" ] || return 1
+      [ -n "''${PGPORT:-}" ] || return 1
+      pg_isready -q -h "$PGHOST" -p "$PGPORT"
+    }
+
+    runtime_hold_postgres() {
+      while runtime_postgres_healthy; do
+        sleep 2
+      done
+
+      echo "postgres: stopped or became unavailable" >&2
+      return 1
     }
 
     runtime_ports_have_listeners() {
@@ -927,6 +946,9 @@
           ;;
         withpg)
           runtime_withpg "$@"
+          ;;
+        hold-postgres)
+          runtime_hold_postgres
           ;;
         check)
           runtime_check
