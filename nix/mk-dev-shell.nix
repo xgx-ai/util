@@ -1037,7 +1037,7 @@ in
 
       ${
         if hasPostgres
-        then "withpg true"
+        then "runtime_postgres_healthy || withpg true"
         else ""
       }
 
