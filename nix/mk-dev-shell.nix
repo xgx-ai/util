@@ -997,11 +997,25 @@
       export XGX_SECRETS_FILE="$PWD/${secretsFile}"
       export XGX_SECRETS_LOAD_INTO_ENV=${if secretsLoadIntoEnv then "1" else "0"}
 
-      if [ "$XGX_SECRETS_LOAD_INTO_ENV" = "1" ] && [ -f "$XGX_SECRETS_FILE" ] && command -v sops >/dev/null 2>&1; then
-        echo sops: loading "$XGX_SECRETS_FILE"
-        set -a
-        source <(sops -d "$XGX_SECRETS_FILE")
-        set +a
+      if [ "$XGX_SECRETS_LOAD_INTO_ENV" = "1" ]; then
+        if [ ! -f "$XGX_SECRETS_FILE" ]; then
+          echo "sops: warning: $XGX_SECRETS_FILE not found; continuing without secrets" >&2
+        elif ! command -v sops >/dev/null 2>&1; then
+          echo "sops: warning: sops is not available; continuing without secrets" >&2
+        else
+          secrets_env_tmp="$(mktemp)"
+          if sops -d "$XGX_SECRETS_FILE" >"$secrets_env_tmp" 2>/dev/null; then
+            echo sops: loading "$XGX_SECRETS_FILE"
+            set -a
+            if ! source "$secrets_env_tmp"; then
+              echo "sops: warning: could not source $XGX_SECRETS_FILE; continuing with partial secrets" >&2
+            fi
+            set +a
+          else
+            echo "sops: warning: could not decrypt $XGX_SECRETS_FILE; continuing without secrets" >&2
+          fi
+          rm -f "$secrets_env_tmp"
+        fi
       fi
     '';
 
