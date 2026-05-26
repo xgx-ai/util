@@ -513,7 +513,7 @@
       done
 
       if [ -n "''${PGPORT:-}" ]; then
-        printf '%-12s %s\n' "postgres:" 'cd "$RUNTIME_ROOT" && withpg runtime hold-postgres' >>"$RUNTIME_PROCFILE"
+        printf '%-12s %s\n' "postgres:" 'cd "$RUNTIME_ROOT" && runtime postgres-service' >>"$RUNTIME_PROCFILE"
       fi
 
       if [ -n "''${REDIS_PORT:-}" ]; then
@@ -764,6 +764,68 @@
       pg_isready -q -h "$PGHOST" -p "$PGPORT"
     }
 
+    runtime_with_lock() {
+      local lock_file="''${1:-}"
+      shift || true
+
+      if [ -z "$lock_file" ] || [ $# -eq 0 ]; then
+        echo "Usage: runtime_with_lock <lock-file> <command> [args...]" >&2
+        return 1
+      fi
+
+      mkdir -p "$(dirname "$lock_file")"
+      ${shellPkgs.perl}/bin/perl -MFcntl=:flock -e '
+        my ($lock_file, @command) = @ARGV;
+        open(my $lock, ">", $lock_file) or die "lock: cannot open $lock_file: $!\n";
+        flock($lock, LOCK_EX) or die "lock: cannot lock $lock_file: $!\n";
+        system @command;
+        my $status = $?;
+        if ($status == -1) {
+          die "lock: failed to run $command[0]: $!\n";
+        }
+        if ($status & 127) {
+          exit(128 + ($status & 127));
+        }
+        exit($status >> 8);
+      ' "$lock_file" "$@"
+    }
+
+    runtime_postgres_lock_file() {
+      printf '%s\n' "''${DATA_ROOT:-$PGDATA/..}/postgres.lifecycle.lock"
+    }
+
+    runtime_bootstrap_postgres() {
+      runtime_load --quiet
+
+      if [ -z "''${PGDATA:-}" ] || [ -z "''${PGHOST:-}" ] || [ -z "''${PGPORT:-}" ]; then
+        echo "PGDATA, PGHOST, and PGPORT are not configured" >&2
+        return 1
+      fi
+
+      if [ ! -f "$PGDATA/PG_VERSION" ]; then
+        mkdir -p "$PGDATA"
+        initdb --no-locale --encoding=UTF8 --auth=trust
+      fi
+
+      if ! runtime_postgres_healthy; then
+        echo "postgres: starting..."
+        pg_ctl start -s -D "$PGDATA" -l "$PGDATA/../postgres.log" -o "-k $PGHOST -p $PGPORT"
+      fi
+
+      if ! runtime_postgres_healthy; then
+        echo "postgres: failed to start" >&2
+        return 1
+      fi
+
+      psql -h "$PGHOST" -p "$PGPORT" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '$PGDATABASE'" | grep -q 1 ||
+        createdb -h "$PGHOST" -p "$PGPORT" "$PGDATABASE"
+
+      local extension
+      for extension in "''${runtime_postgres_extensions[@]}"; do
+        psql -h "$PGHOST" -p "$PGPORT" -d "$PGDATABASE" -c "create extension if not exists $extension" >/dev/null
+      done
+    }
+
     runtime_hold_postgres() {
       while runtime_postgres_healthy; do
         sleep 2
@@ -771,6 +833,30 @@
 
       echo "postgres: stopped or became unavailable" >&2
       return 1
+    }
+
+    runtime_postgres_service() {
+      runtime_load --quiet
+
+      if runtime_postgres_healthy; then
+        was_running=true
+      else
+        was_running=false
+      fi
+
+      cleanup() {
+        if [ "''${was_running:-true}" != "true" ]; then
+          echo "postgres: stopping..."
+          pg_ctl stop -s -D "$PGDATA" 2>/dev/null || true
+        fi
+      }
+      trap cleanup EXIT
+
+      if ! $was_running; then
+        runtime_with_lock "$(runtime_postgres_lock_file)" "$(command -v runtime)" bootstrap-postgres || return 1
+      fi
+
+      runtime_hold_postgres
     }
 
     runtime_ports_have_listeners() {
@@ -862,52 +948,9 @@
         return 1
       fi
 
-      LOCK_DIR="''${DATA_ROOT:-$PGDATA/..}/postgres.lock"
-
-      for _ in $(seq 1 300); do
-        if mkdir "$LOCK_DIR" 2>/dev/null; then
-          have_lock=true
-          break
-        fi
-
-        sleep 0.2
-      done
-
-      if [ "''${have_lock:-false}" != "true" ]; then
-        echo "postgres: timed out waiting for $LOCK_DIR" >&2
-        return 1
+      if ! runtime_postgres_healthy; then
+        runtime_with_lock "$(runtime_postgres_lock_file)" "$(command -v runtime)" bootstrap-postgres || return 1
       fi
-
-      was_running=true
-
-      cleanup() {
-        if [ "''${was_running:-true}" != "true" ]; then
-          echo "postgres: stopping..."
-          pg_ctl stop -s -D "$PGDATA"
-        fi
-        rmdir "$LOCK_DIR" 2>/dev/null || true
-      }
-      trap cleanup EXIT
-
-      if [ ! -f "$PGDATA/PG_VERSION" ]; then
-        mkdir -p "$PGDATA"
-        initdb --no-locale --encoding=UTF8 --auth=trust
-      fi
-
-      pg_isready -q -h "$PGHOST" -p "$PGPORT" && was_running=true || was_running=false
-
-      if ! $was_running; then
-        echo "postgres: starting..."
-        pg_ctl start -s -D "$PGDATA" -l "$PGDATA/../postgres.log" -o "-k $PGHOST -p $PGPORT"
-      fi
-
-      psql -h "$PGHOST" -p "$PGPORT" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '$PGDATABASE'" | grep -q 1 ||
-        createdb -h "$PGHOST" -p "$PGPORT" "$PGDATABASE"
-
-      local extension
-      for extension in "''${runtime_postgres_extensions[@]}"; do
-        psql -h "$PGHOST" -p "$PGPORT" -d "$PGDATABASE" -c "create extension if not exists $extension" >/dev/null
-      done
 
       "$@"
     }
@@ -946,6 +989,12 @@
           ;;
         withpg)
           runtime_withpg "$@"
+          ;;
+        bootstrap-postgres)
+          runtime_bootstrap_postgres
+          ;;
+        postgres-service)
+          runtime_postgres_service
           ;;
         hold-postgres)
           runtime_hold_postgres
@@ -1048,12 +1097,6 @@ in
       source "$(command -v runtime)" load --quiet
 
       ${caddyTrustHook}
-
-      ${
-        if hasPostgres
-        then "runtime_postgres_healthy || withpg true"
-        else ""
-      }
 
       ${installHook}
 
