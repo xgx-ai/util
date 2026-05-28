@@ -5,8 +5,13 @@
     {
       androidSdkVersion = "36";
       buildToolsVersions = ["36.0.0" "35.0.0"];
+      buildOutput = null;
       cmdLineToolsVersion = "latest";
       cmakeVersions = ["3.22.1"];
+      credentialsDir = ".credentials/android";
+      defaultProfile = "production";
+      defaultReleaseStatus = "draft";
+      defaultTrack = "production";
       env = {};
       extraPackages = _pkgs: [];
       gradleUserHome = ".data/gradle";
@@ -97,6 +102,11 @@
       ANDROID_SDK_ROOT = androidSdkRoot;
       ANDROID_NDK_HOME = androidNdkRoot;
       ANDROID_NDK_ROOT = androidNdkRoot;
+      XGX_ANDROID_CREDENTIALS_DIR = cfg.credentialsDir;
+      XGX_ANDROID_DEFAULT_PROFILE = cfg.defaultProfile;
+      XGX_ANDROID_DEFAULT_RELEASE_STATUS = cfg.defaultReleaseStatus;
+      XGX_ANDROID_DEFAULT_TRACK = cfg.defaultTrack;
+      XGX_ANDROID_MOBILE_DIR = cfg.mobileDir;
       JAVA_HOME = jdk.home;
       ORG_GRADLE_PROJECT_reactNativeArchitectures =
         lib.concatStringsSep "," cfg.reactNativeArchitectures;
@@ -104,9 +114,49 @@
       EXPO_NO_TELEMETRY = "1";
       XGX_ANDROID_NIX = "1";
     }
+    // lib.optionalAttrs (cfg.buildOutput != null) {
+      XGX_ANDROID_BUILD_OUTPUT = cfg.buildOutput;
+    }
+    // lib.optionalAttrs (secretsFile != null) {
+      XGX_ANDROID_SECRETS_FILE = secretsFile;
+    }
     // cfg.env;
 
+  androidReleaseTools = pkgs.runCommand "xgx-android-release-tools" {} ''
+    mkdir -p "$out/bin" "$out/lib/xgx/android-release"
+
+    cp ${../src/android-release/common.ts} "$out/lib/xgx/android-release/common.ts"
+    cp ${../src/android-release/prepare-credentials.ts} "$out/lib/xgx/android-release/prepare-credentials.ts"
+    cp ${../src/android-release/build.ts} "$out/lib/xgx/android-release/build.ts"
+    cp ${../src/android-release/submit.ts} "$out/lib/xgx/android-release/submit.ts"
+    cp ${../src/android-release/release.ts} "$out/lib/xgx/android-release/release.ts"
+
+    cat >"$out/bin/xgx-android-prepare-credentials" <<EOF
+    #!${pkgs.bash}/bin/bash
+    exec ${pkgs.bun}/bin/bun "$out/lib/xgx/android-release/prepare-credentials.ts" "\$@"
+    EOF
+
+    cat >"$out/bin/xgx-android-build" <<EOF
+    #!${pkgs.bash}/bin/bash
+    exec ${pkgs.bun}/bin/bun "$out/lib/xgx/android-release/build.ts" "\$@"
+    EOF
+
+    cat >"$out/bin/xgx-android-submit" <<EOF
+    #!${pkgs.bash}/bin/bash
+    exec ${pkgs.bun}/bin/bun "$out/lib/xgx/android-release/submit.ts" "\$@"
+    EOF
+
+    cat >"$out/bin/xgx-android-release" <<EOF
+    #!${pkgs.bash}/bin/bash
+    exec ${pkgs.bun}/bin/bun "$out/lib/xgx/android-release/release.ts" "\$@"
+    EOF
+
+    sed -i 's/^    //' "$out"/bin/xgx-android-*
+    chmod +x "$out"/bin/xgx-android-*
+  '';
+
   standardPackages = [
+    androidReleaseTools
     androidSdk
     androidComposition.platform-tools
     jdk

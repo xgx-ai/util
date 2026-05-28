@@ -7,7 +7,6 @@
       env = {};
       extraPackages = _pkgs: [];
       install = "bun";
-      overlays = [];
       portBlockSize = 20;
       portRangeSize = 30000;
       portRangeStart = 20000;
@@ -18,14 +17,7 @@
     }
     // config;
 
-  shellPkgs =
-    if cfg.overlays == []
-    then pkgs
-    else
-      import pkgs.path {
-        system = pkgs.stdenv.hostPlatform.system;
-        overlays = cfg.overlays;
-      };
+  shellPkgs = pkgs;
 
   services = cfg.services;
   serviceNames = builtins.attrNames services;
@@ -102,6 +94,15 @@
   postgresCfg = services.postgres or {};
   postgresDatabase = postgresCfg.database or cfg.name;
   postgresExtensions = postgresCfg.extensions or [];
+  postgresPackage =
+    postgresCfg.package
+    or (
+      shellPkgs.postgresql.withPackages (
+        ps:
+          (postgresCfg.extensionPackages or (_ps: [])) ps
+          ++ lib.optionals (builtins.elem "postgis" postgresExtensions) [ps.postgis]
+      )
+    );
 
   s3Cfg = services.s3 or {};
   s3Bucket = s3Cfg.bucket or "uploads";
@@ -162,7 +163,7 @@
     ]
     ++ lib.optional usesBun shellPkgs.bun
     ++ lib.optional hasCaddy shellPkgs.caddy
-    ++ lib.optional hasPostgres shellPkgs.postgresql
+    ++ lib.optional hasPostgres postgresPackage
     ++ lib.optional hasRedis shellPkgs.valkey
     ++ lib.optional hasS3 shellPkgs.rclone
     ++ lib.optionals (cfg.secrets != null) [shellPkgs.sops shellPkgs.age];

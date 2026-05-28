@@ -15,16 +15,10 @@
       "aarch64-darwin"
     ];
 
-    mkLib = {
-      pkgs,
-      androidPkgs ? pkgs,
-      ...
-    }: {
+    mkLib = {androidPkgs, pkgs}: {
       mkAndroidDevShell = import ./nix/mk-android-dev-shell.nix {pkgs = androidPkgs;};
       mkDevShell = import ./nix/mk-dev-shell.nix {inherit pkgs;};
     };
-
-    libFor = pkgs: mkLib {inherit pkgs;};
 
     forEachSupportedSystem = f:
       lib.genAttrs supportedSystems (
@@ -43,8 +37,6 @@
           }
       );
   in {
-    inherit libFor;
-
     lib = forEachSupportedSystem (
       {androidPkgs, pkgs}: mkLib {inherit androidPkgs pkgs;}
     );
