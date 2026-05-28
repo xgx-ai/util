@@ -25,6 +25,7 @@
   in {
     lib = forEachSupportedSystem (
       {pkgs}: {
+        mkAndroidDevShell = import ./nix/mk-android-dev-shell.nix {inherit pkgs;};
         mkDevShell = import ./nix/mk-dev-shell.nix {inherit pkgs;};
       }
     );
