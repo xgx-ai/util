@@ -15,19 +15,38 @@
       "aarch64-darwin"
     ];
 
+    mkLib = {
+      pkgs,
+      androidPkgs ? pkgs,
+      ...
+    }: {
+      mkAndroidDevShell = import ./nix/mk-android-dev-shell.nix {pkgs = androidPkgs;};
+      mkDevShell = import ./nix/mk-dev-shell.nix {inherit pkgs;};
+    };
+
+    libFor = pkgs: mkLib {inherit pkgs;};
+
     forEachSupportedSystem = f:
       lib.genAttrs supportedSystems (
-        system:
+        system: let
+          pkgs = import nixpkgs {inherit system;};
+          androidPkgs = import nixpkgs {
+            inherit system;
+            config = {
+              allowUnfree = true;
+              android_sdk.accept_license = true;
+            };
+          };
+        in
           f {
-            pkgs = import nixpkgs {inherit system;};
+            inherit androidPkgs pkgs;
           }
       );
   in {
+    inherit libFor;
+
     lib = forEachSupportedSystem (
-      {pkgs}: {
-        mkAndroidDevShell = import ./nix/mk-android-dev-shell.nix {inherit pkgs;};
-        mkDevShell = import ./nix/mk-dev-shell.nix {inherit pkgs;};
-      }
+      {androidPkgs, pkgs}: mkLib {inherit androidPkgs pkgs;}
     );
   };
 }

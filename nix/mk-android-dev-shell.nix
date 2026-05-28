@@ -17,7 +17,6 @@
       mobileDir = "frontend-enduser";
       ndkVersion = "27.1.12297006";
       node = pkgs: pkgs.nodejs_22;
-      overlays = [];
       reactNativeArchitectures = ["arm64-v8a"];
       secrets = {
         file = "secrets.env";
@@ -27,21 +26,12 @@
     }
     // config;
 
-  androidPkgs = import pkgs.path {
-    system = pkgs.stdenv.hostPlatform.system;
-    overlays = cfg.overlays;
-    config = {
-      allowUnfree = true;
-      android_sdk.accept_license = true;
-    };
-  };
-
   packageFrom = value:
     if builtins.isFunction value
-    then value androidPkgs
+    then value pkgs
     else value;
 
-  androidComposition = androidPkgs.androidenv.composeAndroidPackages {
+  androidComposition = pkgs.androidenv.composeAndroidPackages {
     inherit (cfg) buildToolsVersions cmakeVersions cmdLineToolsVersion;
     platformVersions = [cfg.androidSdkVersion];
     includeNDK = true;
@@ -98,7 +88,7 @@
 
   extraPackages =
     if builtins.isFunction cfg.extraPackages
-    then cfg.extraPackages androidPkgs
+    then cfg.extraPackages pkgs
     else cfg.extraPackages;
 
   androidEnv =
@@ -121,19 +111,19 @@
     androidComposition.platform-tools
     jdk
     node
-    androidPkgs.bun
-    androidPkgs.cmake
-    androidPkgs.eas-cli
-    androidPkgs.fastlane
-    androidPkgs.git
-    androidPkgs.sops
-    androidPkgs.age
-    androidPkgs.unzip
-    androidPkgs.which
-    androidPkgs.zip
+    pkgs.bun
+    pkgs.cmake
+    pkgs.eas-cli
+    pkgs.fastlane
+    pkgs.git
+    pkgs.sops
+    pkgs.age
+    pkgs.unzip
+    pkgs.which
+    pkgs.zip
   ];
 in
-  androidPkgs.mkShell {
+  pkgs.mkShell {
     packages = standardPackages ++ extraPackages;
     env = androidEnv;
     shellHook = ''
