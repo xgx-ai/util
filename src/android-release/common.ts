@@ -440,23 +440,25 @@ export async function defaultAabPathForProfile(profile: string): Promise<string>
 	return join(mobileDir, "builds", `${appSlug || "android"}-${profile}.aab`);
 }
 
-async function collectAabs(dir: string): Promise<string[]> {
+async function collectFilesByExtension(dir: string, extension: string): Promise<string[]> {
 	if (!(await pathExists(dir))) return [];
 
 	const entries = await readdir(dir, { withFileTypes: true });
 	const paths = await Promise.all(
 		entries.map(async (entry) => {
 			const path = join(dir, entry.name);
-			if (entry.isDirectory()) return collectAabs(path);
-			return entry.isFile() && entry.name.endsWith(".aab") ? [path] : [];
+			if (entry.isDirectory()) return collectFilesByExtension(path, extension);
+			return entry.isFile() && entry.name.endsWith(extension) ? [path] : [];
 		}),
 	);
 
 	return paths.flat();
 }
 
-export async function findLatestAab(): Promise<string | undefined> {
-	const candidates = await collectAabs(join(mobileDir, "builds"));
+async function findLatestBuildArtifact(
+	extension: string,
+): Promise<string | undefined> {
+	const candidates = await collectFilesByExtension(join(mobileDir, "builds"), extension);
 	if (candidates.length === 0) return undefined;
 
 	const withStats = await Promise.all(
@@ -467,6 +469,14 @@ export async function findLatestAab(): Promise<string | undefined> {
 	);
 
 	return withStats.sort((a, b) => b.mtimeMs - a.mtimeMs)[0]?.path;
+}
+
+export async function findLatestAab(): Promise<string | undefined> {
+	return findLatestBuildArtifact(".aab");
+}
+
+export async function findLatestApk(): Promise<string | undefined> {
+	return findLatestBuildArtifact(".apk");
 }
 
 export function resolveFromRepo(path: string): string {

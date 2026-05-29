@@ -129,6 +129,7 @@
     cp ${../src/android-release/prepare-credentials.ts} "$out/lib/xgx/android-release/prepare-credentials.ts"
     cp ${../src/android-release/build.ts} "$out/lib/xgx/android-release/build.ts"
     cp ${../src/android-release/submit.ts} "$out/lib/xgx/android-release/submit.ts"
+    cp ${../src/android-release/install.ts} "$out/lib/xgx/android-release/install.ts"
     cp ${../src/android-release/release.ts} "$out/lib/xgx/android-release/release.ts"
 
     cat >"$out/bin/xgx-android-prepare-credentials" <<EOF
@@ -144,6 +145,11 @@
     cat >"$out/bin/xgx-android-submit" <<EOF
     #!${pkgs.bash}/bin/bash
     exec ${pkgs.bun}/bin/bun "$out/lib/xgx/android-release/submit.ts" "\$@"
+    EOF
+
+    cat >"$out/bin/xgx-android-install" <<EOF
+    #!${pkgs.bash}/bin/bash
+    exec ${pkgs.bun}/bin/bun "$out/lib/xgx/android-release/install.ts" "\$@"
     EOF
 
     cat >"$out/bin/xgx-android-release" <<EOF
