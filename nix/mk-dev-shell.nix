@@ -203,7 +203,7 @@
     #!${shellPkgs.bash}/bin/bash
     set -euo pipefail
 
-    RUNTIME_SCRIPT_VERSION=5
+    RUNTIME_SCRIPT_VERSION=6
     RUNTIME_SCRIPT_CONFIG_HASH=${lib.escapeShellArg configHash}
     RUNTIME_PROJECT_NAME=${lib.escapeShellArg cfg.name}
     RUNTIME_DATA_DIR=${lib.escapeShellArg cfg.dataDir}
@@ -518,22 +518,42 @@
       fi
 
       if [ -n "''${REDIS_PORT:-}" ]; then
-        printf '%-12s %s\n' "redis:" 'cd "$RUNTIME_ROOT" && valkey-server --port $REDIS_PORT --dir "$REDIS_DATA" --daemonize no' >>"$RUNTIME_PROCFILE"
+        printf '%-12s %s\n' "redis:" 'cd "$RUNTIME_ROOT" && runtime redis-service' >>"$RUNTIME_PROCFILE"
       fi
 
       if [ -n "''${S3_PORT:-}" ]; then
-        printf '%-12s %s\n' "s3:" 'cd "$RUNTIME_ROOT" && rclone serve s3 "$DATA_ROOT/s3" --auth-key "$SERVER_R2_ACCESS_KEY,$SERVER_R2_SECRET_KEY" --addr ":$S3_PORT" --force-path-style' >>"$RUNTIME_PROCFILE"
+        printf '%-12s %s\n' "s3:" 'cd "$RUNTIME_ROOT" && runtime s3-service' >>"$RUNTIME_PROCFILE"
       fi
 
       if [ -n "''${CADDY_HTTPS_PORT:-}" ]; then
-        printf '%-12s %s\n' "caddy:" 'cd "$RUNTIME_ROOT" && caddy run --config "$RUNTIME_CADDYFILE"' >>"$RUNTIME_PROCFILE"
+        printf '%-12s %s\n' "caddy:" 'cd "$RUNTIME_ROOT" && runtime caddy-service' >>"$RUNTIME_PROCFILE"
       fi
+    }
+
+    runtime_existing_block() {
+      if [ ! -f "$RUNTIME_FILE" ]; then
+        return 1
+      fi
+
+      (
+        # shellcheck disable=SC1090
+        . "$RUNTIME_FILE"
+        [ "''${RUNTIME_ROOT:-}" = "$PROJECT_DIR" ] || exit 1
+        [ "''${RUNTIME_ID:-}" = "$(runtime_id)" ] || exit 1
+        [ "''${RUNTIME_DOMAIN:-}" = "$(runtime_domain)" ] || exit 1
+        [ -n "''${RUNTIME_PORT_BLOCK:-}" ] || exit 1
+        printf '%s\n' "$RUNTIME_PORT_BLOCK"
+      )
     }
 
     runtime_generate() {
       local start block offset service var port subdomain upper direct url
-      start="$(runtime_block_start)"
-      block="$(runtime_find_free_block "$start")"
+      block="$(runtime_existing_block || true)"
+
+      if [ -z "$block" ]; then
+        start="$(runtime_block_start)"
+        block="$(runtime_find_free_block "$start")"
+      fi
 
       mkdir -p "$DATA_ROOT"
       : >"$RUNTIME_FILE"
@@ -860,6 +880,117 @@
       runtime_hold_postgres
     }
 
+    runtime_port_listener_command() {
+      local port="$1"
+      lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | awk 'NR==2 {print $1}'
+    }
+
+    runtime_port_listener_matches() {
+      local port="$1"
+      local pattern="$2"
+      local command
+      command="$(runtime_port_listener_command "$port")"
+      [ -n "$command" ] && grep -Eiq "$pattern" <<<"$command"
+    }
+
+    runtime_hold_port_listener() {
+      local name="$1"
+      local port="$2"
+
+      while runtime_port_has_listener "$port"; do
+        sleep 2
+      done
+
+      echo "$name: stopped or became unavailable" >&2
+      return 1
+    }
+
+    runtime_redis_healthy() {
+      [ -n "''${REDIS_PORT:-}" ] || return 1
+      valkey-cli -h 127.0.0.1 -p "$REDIS_PORT" ping 2>/dev/null | grep -q '^PONG$'
+    }
+
+    runtime_redis_service() {
+      runtime_load --quiet
+
+      if [ -z "''${REDIS_PORT:-}" ] || [ -z "''${REDIS_DATA:-}" ]; then
+        echo "REDIS_PORT and REDIS_DATA are not configured" >&2
+        return 1
+      fi
+
+      if runtime_redis_healthy; then
+        echo "redis: reusing existing server on port $REDIS_PORT"
+        runtime_hold_port_listener "redis" "$REDIS_PORT"
+        return $?
+      fi
+
+      if runtime_port_has_listener "$REDIS_PORT"; then
+        echo "redis: port $REDIS_PORT is already in use by $(runtime_port_listener_command "$REDIS_PORT")" >&2
+        return 1
+      fi
+
+      exec valkey-server --port "$REDIS_PORT" --dir "$REDIS_DATA" --daemonize no --tcp-backlog 128
+    }
+
+    runtime_s3_service() {
+      runtime_load --quiet
+
+      if [ -z "''${S3_PORT:-}" ]; then
+        echo "S3_PORT is not configured" >&2
+        return 1
+      fi
+
+      if runtime_port_has_listener "$S3_PORT"; then
+        if runtime_port_listener_matches "$S3_PORT" '^rclone$'; then
+          echo "s3: reusing existing server on port $S3_PORT"
+          runtime_hold_port_listener "s3" "$S3_PORT"
+          return $?
+        fi
+
+        echo "s3: port $S3_PORT is already in use by $(runtime_port_listener_command "$S3_PORT")" >&2
+        return 1
+      fi
+
+      exec rclone serve s3 "$DATA_ROOT/s3" --auth-key "$SERVER_R2_ACCESS_KEY,$SERVER_R2_SECRET_KEY" --addr ":$S3_PORT" --force-path-style
+    }
+
+    runtime_caddy_service() {
+      runtime_load --quiet
+
+      if [ -z "''${CADDY_HTTPS_PORT:-}" ]; then
+        echo "CADDY_HTTPS_PORT is not configured" >&2
+        return 1
+      fi
+
+      local port has_listener
+      has_listener=false
+      for port in "''${CADDY_HTTP_PORT:-}" "''${CADDY_HTTPS_PORT:-}" "''${CADDY_ADMIN_PORT:-}"; do
+        [ -n "$port" ] || continue
+
+        if runtime_port_has_listener "$port"; then
+          has_listener=true
+          if ! runtime_port_listener_matches "$port" '^caddy$'; then
+            echo "caddy: port $port is already in use by $(runtime_port_listener_command "$port")" >&2
+            return 1
+          fi
+        fi
+      done
+
+      if $has_listener; then
+        echo "caddy: reusing existing server on port $CADDY_HTTPS_PORT"
+        runtime_hold_port_listener "caddy" "$CADDY_HTTPS_PORT"
+        return $?
+      fi
+
+      exec caddy run --config "$RUNTIME_CADDYFILE"
+    }
+
+    runtime_hivemind_has_listener() {
+      local port
+      port="$(runtime_port hivemind)"
+      [ -n "$port" ] && runtime_port_has_listener "$port"
+    }
+
     runtime_ports_have_listeners() {
       runtime_load --quiet
 
@@ -905,9 +1036,9 @@
 
       if runtime_stack_healthy; then
         was_running=true
-      elif runtime_ports_have_listeners; then
+      elif runtime_hivemind_has_listener; then
         was_running=true
-        runtime_wait_for_stack
+        runtime_wait_for_stack || return 1
       else
         was_running=false
       fi
@@ -996,6 +1127,15 @@
           ;;
         postgres-service)
           runtime_postgres_service
+          ;;
+        redis-service)
+          runtime_redis_service
+          ;;
+        s3-service)
+          runtime_s3_service
+          ;;
+        caddy-service)
+          runtime_caddy_service
           ;;
         hold-postgres)
           runtime_hold_postgres
