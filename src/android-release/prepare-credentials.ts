@@ -1,5 +1,7 @@
 import {
+	appDeclaresFirebaseGoogleServices,
 	cleanupAndroidCredentials,
+	firebaseGoogleServicesJsonPath,
 	googlePlayJsonPath,
 	prepareAndroidCredentials,
 } from "./common.ts";
@@ -14,6 +16,9 @@ Materialises Android release credentials from encrypted secrets.env into ignored
 Options:
   --google-play        Also materialise the Google Play service account JSON.
   --google-play-only   Only materialise the Google Play service account JSON.
+  --google-services    Also materialise Firebase google-services.json.
+  --google-services-only
+                       Only materialise Firebase google-services.json.
   --cleanup            Remove generated Android credential files.
   --help               Show this help.
 
@@ -25,6 +30,9 @@ Required signing secrets:
 
 Required Google Play secret when --google-play is used:
   GOOGLE_PLAY_SERVICE_ACCOUNT_JSON_BASE64
+
+Required Firebase secret when --google-services is used, or when expo.android.googleServicesFile is configured:
+  FIREBASE_ANDROID_GOOGLE_SERVICES_JSON_BASE64
 `);
 }
 
@@ -41,9 +49,15 @@ async function main() {
 	}
 
 	const googlePlayOnly = args.includes("--google-play-only");
+	const googleServicesOnly = args.includes("--google-services-only");
 	const includeGooglePlay = googlePlayOnly || args.includes("--google-play");
+	const includeGoogleServices =
+		googleServicesOnly ||
+		args.includes("--google-services") ||
+		(!googlePlayOnly && (await appDeclaresFirebaseGoogleServices()));
 	const credentials = await prepareAndroidCredentials({
-		includeAndroidSigning: !googlePlayOnly,
+		includeAndroidSigning: !googlePlayOnly && !googleServicesOnly,
+		includeFirebaseGoogleServices: includeGoogleServices,
 		includeGooglePlay,
 	});
 
@@ -52,6 +66,9 @@ async function main() {
 	}
 	if (credentials.keystorePath) {
 		console.log(`Android keystore: ${credentials.keystorePath}`);
+	}
+	if (credentials.firebaseGoogleServicesJsonPath) {
+		console.log(`Firebase google-services.json: ${firebaseGoogleServicesJsonPath}`);
 	}
 	if (credentials.googlePlayJsonPath) {
 		console.log(`Google Play JSON: ${credentials.googlePlayJsonPath}`);

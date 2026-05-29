@@ -1,5 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import {
+	appDeclaresFirebaseGoogleServices,
 	cleanupAndroidCredentials,
 	defaultAabPathForProfile,
 	dirnameFor,
@@ -75,7 +76,10 @@ export async function buildAndroid(options: BuildAndroidOptions = {}): Promise<s
 		? resolveFromRepo(options.output)
 		: await defaultAabPathForProfile(profile);
 	const extraEasArgs = options.extraEasArgs ?? [];
-	const credentials = await prepareAndroidCredentials({ includeAndroidSigning: true });
+	const credentials = await prepareAndroidCredentials({
+		includeAndroidSigning: true,
+		includeFirebaseGoogleServices: await appDeclaresFirebaseGoogleServices(),
+	});
 
 	try {
 		await mkdir(dirnameFor(output), { recursive: true });

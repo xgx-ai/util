@@ -21,14 +21,17 @@ export const googlePlayJsonPath = join(
 	credentialsDir,
 	"google-play-service-account.json",
 );
+export const firebaseGoogleServicesJsonPath = googleServicesJsonPathFromEnv();
 export const easCredentialsPath = join(mobileDir, "credentials.json");
 
 export type AndroidCredentialsOptions = {
 	includeAndroidSigning?: boolean;
+	includeFirebaseGoogleServices?: boolean;
 	includeGooglePlay?: boolean;
 };
 
 export type PreparedAndroidCredentials = {
+	firebaseGoogleServicesJsonPath?: string;
 	easCredentialsPath?: string;
 	googlePlayJsonPath?: string;
 	keystorePath?: string;
@@ -51,6 +54,19 @@ const secretNames = {
 		"GOOGLE_PLAY_SERVICE_ACCOUNT_JSON_B64",
 	],
 	googlePlayJson: ["GOOGLE_PLAY_SERVICE_ACCOUNT_JSON"],
+	firebaseGoogleServicesJsonBase64: [
+		"FIREBASE_ANDROID_GOOGLE_SERVICES_JSON_BASE64",
+		"FIREBASE_ANDROID_GOOGLE_SERVICES_JSON_B64",
+		"ANDROID_GOOGLE_SERVICES_JSON_BASE64",
+		"ANDROID_GOOGLE_SERVICES_JSON_B64",
+		"GOOGLE_SERVICES_JSON_BASE64",
+		"GOOGLE_SERVICES_JSON_B64",
+	],
+	firebaseGoogleServicesJson: [
+		"FIREBASE_ANDROID_GOOGLE_SERVICES_JSON",
+		"ANDROID_GOOGLE_SERVICES_JSON",
+		"GOOGLE_SERVICES_JSON",
+	],
 };
 
 function findRepoRoot(): string {
@@ -72,6 +88,12 @@ function findRepoRoot(): string {
 
 function pathFromEnv(name: string, defaultPath: string): string {
 	return resolveFromRepo(process.env[name]?.trim() || defaultPath);
+}
+
+function googleServicesJsonPathFromEnv(): string {
+	const configuredPath = process.env.XGX_ANDROID_GOOGLE_SERVICES_FILE?.trim();
+	if (configuredPath) return resolveFromRepo(configuredPath);
+	return join(mobileDir, "google-services.json");
 }
 
 export function usageError(message: string): never {
@@ -194,10 +216,43 @@ function decodeGooglePlayJson(env: EnvMap): string {
 	}
 }
 
+async function decodeFirebaseGoogleServicesJson(env: EnvMap): Promise<string> {
+	const encoded = envValue(env, secretNames.firebaseGoogleServicesJsonBase64);
+	const raw = encoded
+		? decodeBase64(encoded, "Firebase google-services.json").toString("utf8")
+		: requireEnvValue(
+				env,
+				secretNames.firebaseGoogleServicesJson,
+				"Firebase google-services.json",
+			);
+
+	try {
+		const parsed = JSON.parse(raw);
+		const { packageName } = await readAndroidAppConfig();
+		const clients = Array.isArray(parsed.client) ? parsed.client : [];
+		const hasMatchingPackage = clients.some(
+			(client) =>
+				client?.client_info?.android_client_info?.package_name === packageName,
+		);
+
+		if (!hasMatchingPackage) {
+			throw new Error(
+				`JSON does not contain an Android client for package ${packageName}`,
+			);
+		}
+
+		return `${JSON.stringify(parsed, null, 2)}\n`;
+	} catch (error) {
+		throw new Error(`Invalid Firebase google-services.json: ${String(error)}`);
+	}
+}
+
 export async function prepareAndroidCredentials(
 	options: AndroidCredentialsOptions = {},
 ): Promise<PreparedAndroidCredentials> {
 	const includeAndroidSigning = options.includeAndroidSigning ?? true;
+	const includeFirebaseGoogleServices =
+		options.includeFirebaseGoogleServices ?? false;
 	const includeGooglePlay = options.includeGooglePlay ?? false;
 	const env = loadAndroidReleaseEnv();
 	const writtenPaths: string[] = [];
@@ -206,6 +261,7 @@ export async function prepareAndroidCredentials(
 
 	let preparedKeystorePath: string | undefined;
 	let preparedEasCredentialsPath: string | undefined;
+	let preparedFirebaseGoogleServicesJsonPath: string | undefined;
 	let preparedGooglePlayJsonPath: string | undefined;
 
 	if (includeAndroidSigning) {
@@ -258,6 +314,17 @@ export async function prepareAndroidCredentials(
 		preparedEasCredentialsPath = easCredentialsPath;
 	}
 
+	if (includeFirebaseGoogleServices) {
+		await writeFile(
+			firebaseGoogleServicesJsonPath,
+			await decodeFirebaseGoogleServicesJson(env),
+			{ mode: 0o600 },
+		);
+		await chmod(firebaseGoogleServicesJsonPath, 0o600);
+		writtenPaths.push(firebaseGoogleServicesJsonPath);
+		preparedFirebaseGoogleServicesJsonPath = firebaseGoogleServicesJsonPath;
+	}
+
 	if (includeGooglePlay) {
 		await writeFile(googlePlayJsonPath, decodeGooglePlayJson(env), { mode: 0o600 });
 		await chmod(googlePlayJsonPath, 0o600);
@@ -267,6 +334,7 @@ export async function prepareAndroidCredentials(
 
 	return {
 		easCredentialsPath: preparedEasCredentialsPath,
+		firebaseGoogleServicesJsonPath: preparedFirebaseGoogleServicesJsonPath,
 		googlePlayJsonPath: preparedGooglePlayJsonPath,
 		keystorePath: preparedKeystorePath,
 		writtenPaths,
@@ -274,7 +342,12 @@ export async function prepareAndroidCredentials(
 }
 
 export async function cleanupAndroidCredentials(paths?: string[]): Promise<void> {
-	const cleanupPaths = paths ?? [easCredentialsPath, keystorePath, googlePlayJsonPath];
+	const cleanupPaths = paths ?? [
+		easCredentialsPath,
+		keystorePath,
+		googlePlayJsonPath,
+		firebaseGoogleServicesJsonPath,
+	];
 
 	for (const path of cleanupPaths) {
 		await rm(path, { force: true });
@@ -427,6 +500,12 @@ async function readAndroidAppConfig(): Promise<{ packageName: string }> {
 		usageError(`${relative(repoRoot, appJsonPath)} does not define expo.android.package.`);
 	}
 	return { packageName };
+}
+
+export async function appDeclaresFirebaseGoogleServices(): Promise<boolean> {
+	const appJsonPath = join(mobileDir, "app.json");
+	const appJson = JSON.parse(await readFile(appJsonPath, "utf8"));
+	return Boolean(appJson.expo?.android?.googleServicesFile);
 }
 
 export async function defaultAabPathForProfile(profile: string): Promise<string> {
