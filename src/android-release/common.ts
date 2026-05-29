@@ -169,6 +169,27 @@ export function loadAndroidReleaseEnv(): EnvMap {
 	};
 }
 
+export function firebaseGoogleServicesBuildEnv(): Record<string, string> {
+	const env = loadAndroidReleaseEnv();
+	const encoded = envValue(env, secretNames.firebaseGoogleServicesJsonBase64);
+	if (encoded) {
+		return {
+			FIREBASE_ANDROID_GOOGLE_SERVICES_JSON_BASE64: encoded.replace(/\s/g, ""),
+		};
+	}
+
+	const raw = envValue(env, secretNames.firebaseGoogleServicesJson);
+	if (raw) {
+		return {
+			FIREBASE_ANDROID_GOOGLE_SERVICES_JSON_BASE64: Buffer.from(raw).toString(
+				"base64",
+			),
+		};
+	}
+
+	return {};
+}
+
 export function envValue(env: EnvMap, names: string[]): string | undefined {
 	for (const name of names) {
 		const value = env[name];

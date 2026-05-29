@@ -4,6 +4,7 @@ import {
 	cleanupAndroidCredentials,
 	defaultAabPathForProfile,
 	dirnameFor,
+	firebaseGoogleServicesBuildEnv,
 	installMobileDependencies,
 	mobileDir,
 	prepareAndroidCredentials,
@@ -76,9 +77,10 @@ export async function buildAndroid(options: BuildAndroidOptions = {}): Promise<s
 		? resolveFromRepo(options.output)
 		: await defaultAabPathForProfile(profile);
 	const extraEasArgs = options.extraEasArgs ?? [];
+	const includeFirebaseGoogleServices = await appDeclaresFirebaseGoogleServices();
 	const credentials = await prepareAndroidCredentials({
 		includeAndroidSigning: true,
-		includeFirebaseGoogleServices: await appDeclaresFirebaseGoogleServices(),
+		includeFirebaseGoogleServices,
 	});
 
 	try {
@@ -100,7 +102,7 @@ export async function buildAndroid(options: BuildAndroidOptions = {}): Promise<s
 			],
 			{
 				cwd: mobileDir,
-				env: buildAndroidEnv(),
+				env: buildAndroidEnv({ includeFirebaseGoogleServices }),
 			},
 		);
 		return output;
@@ -111,7 +113,11 @@ export async function buildAndroid(options: BuildAndroidOptions = {}): Promise<s
 	}
 }
 
-function buildAndroidEnv(): Record<string, string> {
+function buildAndroidEnv({
+	includeFirebaseGoogleServices,
+}: {
+	includeFirebaseGoogleServices: boolean;
+}): Record<string, string> {
 	const gradleJvmArgs = "-Xmx6g -XX:MaxMetaspaceSize=2g -Dfile.encoding=UTF-8";
 	const gradleOpts = [
 		process.env.GRADLE_OPTS,
@@ -121,6 +127,7 @@ function buildAndroidEnv(): Record<string, string> {
 		.join(" ");
 
 	return {
+		...(includeFirebaseGoogleServices ? firebaseGoogleServicesBuildEnv() : {}),
 		GRADLE_OPTS: gradleOpts,
 		NODE_ENV: "production",
 	};
