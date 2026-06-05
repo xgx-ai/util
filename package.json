@@ -1,8 +1,9 @@
 {
 	"name": "@xgx/util",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"type": "module",
 	"exports": {
+		"./env": "./src/env.ts",
 		"./preload/log": "./src/preload/log.ts"
 	}
 }
